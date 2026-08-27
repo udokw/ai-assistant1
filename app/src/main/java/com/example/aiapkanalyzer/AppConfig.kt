@@ -50,11 +50,21 @@ data class AppConfig(
         }
 
         fun load(context: Context): AppConfig {
-            // 优先从应用私有目录读 config.json，不存在则从 assets 读默认配置
             val file = File(context.filesDir, "config.json")
-            val text = if (file.exists()) file.readText()
-            else context.assets.open("config.json").bufferedReader().use { it.readText() }
-            return json.decodeFromString(serializer(), text)
+            val defaultText = context.assets.open("config.json").bufferedReader().use { it.readText() }
+            val defaults = json.decodeFromString(serializer(), defaultText)
+            if (!file.exists()) {
+                save(context, defaults)
+                return defaults
+            }
+            // 读取用户配置，合并 assets 中新增的默认供应商（如 qianwen）
+            val userText = file.readText()
+            val userCfg = json.decodeFromString(serializer(), userText)
+            val mergedProviders = defaults.llm.providers.toMutableMap()
+            userCfg.llm.providers.forEach { (k, v) -> mergedProviders[k] = v }
+            val merged = userCfg.copy(llm = userCfg.llm.copy(providers = mergedProviders))
+            if (merged != userCfg) save(context, merged)
+            return merged
         }
 
         /** 把配置序列化写入 filesDir/config.json（prettyPrint，方便人工查看）。 */

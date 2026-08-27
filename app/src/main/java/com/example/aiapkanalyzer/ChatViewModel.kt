@@ -33,6 +33,8 @@ import java.io.File
 
 enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED }
 
+enum class WorkDirCheckStatus { UNCHECKED, OK, EMPTY, NO_PERMISSION, NOT_FOUND, WRITE_FAIL, UNKNOWN_ERR }
+
 data class ChatMessage(
     val role: String,
     val content: String,
@@ -76,6 +78,9 @@ data class SettingsUiState(
     val mcpUrl: String = "",
     val mcpEnabled: Boolean = true,
     val workDirUri: String = "",
+    val workDirCheckStatus: WorkDirCheckStatus = WorkDirCheckStatus.UNCHECKED,
+    val workDirCheckMsg: String = "",
+    val workDirCheckingNow: Boolean = false,
     val maxIterations: Int = 25,
     val temperature: Float = 0.2f,
     val saveResult: String = "",
@@ -506,6 +511,88 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
             context.contentResolver.takePersistableUriPermission(Uri.parse(uri), flags)
         } catch (_: Exception) {}
+        triggerCheckWorkDir(uri)
+    }
+
+    fun triggerCheckWorkDir(uri: String? = null) {
+        val target = uri ?: config.workDirUri
+        viewModelScope.launch(Dispatchers.IO) {
+            _settingsState.update { it.copy(workDirCheckingNow = true) }
+            val (s, m) = checkWorkDirImpl(target)
+            _settingsState.update { it.copy(workDirCheckingNow = false, workDirCheckStatus = s, workDirCheckMsg = m) }
+        }
+    }
+
+    suspend fun checkWorkDir(uri: String? = null): Pair<WorkDirCheckStatus, String> {
+        val target = uri ?: config.workDirUri
+        _settingsState.update { it.copy(workDirCheckingNow = true) }
+        return try { checkWorkDirImpl(target) }
+        finally { _settingsState.update { it.copy(workDirCheckingNow = false) } }
+            .also { (s, m) -> _settingsState.update { it.copy(workDirCheckStatus = s, workDirCheckMsg = m) } }
+    }
+
+    private fun checkWorkDirImpl(uri: String): Pair<WorkDirCheckStatus, String> {
+        if (uri.isBlank()) {
+            return WorkDirCheckStatus.EMPTY to "工作目录未设置，请先选择一个目录。"
+        }
+        val u = try { Uri.parse(uri) } catch (e: Exception) {
+            return WorkDirCheckStatus.UNKNOWN_ERR to "URI 解析失败: ${e.message}"
+        }
+        // 1) 进程级 SAF 权限检查（避免 persistedUriPermissions 里 BigInteger modeFlags 的 API 差异）
+        val needFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val permGranted = try {
+            context.checkCallingOrSelfUriPermission(u, needFlags) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } catch (_: Exception) { false }
+        val permPersisted = try {
+            context.contentResolver.persistedUriPermissions.any { p ->
+                if (p.uri != u) return@any false
+                val flagsInt: Int =
+                    kotlin.runCatching { p.javaClass.getMethod("getModeFlags").invoke(p) as? Int }
+                        .getOrNull()
+                        ?: kotlin.runCatching { p.javaClass.getField("modeFlags").getInt(p) }
+                            .getOrNull()
+                        ?: 0
+                (flagsInt and needFlags) == needFlags
+            }
+        } catch (_: Exception) { false }
+        // 2) DocumentFile 构造（若目录被删/卸载返回 null）
+        val tree = kotlin.runCatching { DocumentFile.fromTreeUri(context, u) }.getOrNull()
+        if (tree == null) {
+            return WorkDirCheckStatus.NOT_FOUND to (
+                if (!permGranted) "SAF 权限已被系统回收，且无法打开所选目录（可能目录已删除或卸载存储）。请重新选择。"
+                else "无法打开所选目录（可能目录已删除或卸载存储），请重新选择。"
+            )
+        }
+        if (!permGranted || !tree.canRead() || !tree.canWrite()) {
+            return WorkDirCheckStatus.NO_PERMISSION to "SAF 权限不足：缺少读或写权限。请重新选择并在弹出的权限页勾选允许读写。"
+        }
+        // 3) 实际写/读/删测试
+        val probeName = ".aiassist_wd_probe_${System.currentTimeMillis()}.tmp"
+        val probePayload = "ok|${probeName}|payload".toByteArray(Charsets.UTF_8)
+        return try {
+            val probeDoc = tree.createFile("application/octet-stream", probeName)
+                ?: return WorkDirCheckStatus.WRITE_FAIL to "写测试失败：无法在该目录创建临时文件。"
+            try {
+                context.contentResolver.openOutputStream(probeDoc.uri, "wt")?.use { o -> o.write(probePayload) }
+                    ?: return WorkDirCheckStatus.WRITE_FAIL to "写测试失败：无法打开 probe 文件输出流。"
+                val readBack = context.contentResolver.openInputStream(probeDoc.uri)?.use { i -> i.readBytes() }
+                if (readBack == null || !readBack.contentEquals(probePayload)) {
+                    return WorkDirCheckStatus.WRITE_FAIL to "写测试失败：读取回内容与写入不一致（${readBack?.size ?: 0} bytes）。"
+                }
+            } finally {
+                runCatching { probeDoc.delete() }
+            }
+            WorkDirCheckStatus.OK to buildString {
+                append("✅ 工作目录验证通过：")
+                append("\n  · 目录路径：")
+                append(uri.substringAfterLast('/'))
+                append("\n  · SAF 进程权限：").append(if (permGranted) "已授予（当前可用）" else "不可用")
+                append("\n  · SAF 持久权限：").append(if (permPersisted) "已授予（重启依然有效）" else "未持久化（系统可能回收）")
+                append("\n  · 读写测试：通过（创建-写入-读取-删除 probe 文件）")
+            }
+        } catch (e: Exception) {
+            WorkDirCheckStatus.WRITE_FAIL to "写测试异常：${e::class.java.simpleName}: ${e.message}"
+        }
     }
 
     fun isOverlayPermissionGranted(): Boolean {
@@ -625,10 +712,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 config = updated
                 AppConfig.save(context, updated)
 
+                // 保存后若设置了 workDirUri，顺便再跑一次诊断（结果可直接在保存按钮旁显示）
+                val checkInfo = if (s.workDirUri.isNotBlank()) {
+                    val (st, m) = checkWorkDir(s.workDirUri)
+                    when (st) {
+                        WorkDirCheckStatus.OK -> "，工作目录已验证通过"
+                        WorkDirCheckStatus.EMPTY -> "，工作目录未设置"
+                        else -> "，工作目录有问题：$st"
+                    }
+                } else "，工作目录未设置"
+
                 if (_uiState.value.isBusy) {
-                    _settingsState.update { it.copy(saveResult = "保存成功，设置将在当前任务完成后生效") }
+                    _settingsState.update { it.copy(saveResult = "保存成功，设置将在当前任务完成后生效$checkInfo") }
                 } else {
-                    _settingsState.update { it.copy(saveResult = "保存成功") }
+                    _settingsState.update { it.copy(saveResult = "保存成功$checkInfo") }
                     reconnect()
                 }
             } catch (e: Exception) {

@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -120,15 +121,94 @@ class MainActivity : ComponentActivity() {
                     val showArtifacts by vm.artifactsState.collectAsState()
                     val showSettings by vm.settingsState.collectAsState()
                     var currentPage by remember { mutableStateOf("chat") }
-                    when {
-                        showSettings.visible -> SettingsScreen(vm)
-                        showArtifacts.visible -> ArtifactsScreen(vm)
-                        currentPage == "profile" -> ProfileScreen(vm, onBack = { currentPage = "chat" })
-                        else -> ChatScreen(
-                            vm,
-                            onOpenArtifacts = vm::openArtifacts,
-                            onOpenProfile = { currentPage = "profile" }
-                        )
+
+                    // ---- 启动时强制引导：workDirUri 为空就弹 OpenDocumentTree ----
+                    val cfg = vm.config
+                    var workDirBootstrap by remember { mutableStateOf(cfg.workDirUri.isBlank()) }
+                    val scope = rememberCoroutineScope()
+                    val treeLauncher = rememberLauncherForActivityResult(
+                        contract = ActivityResultContracts.OpenDocumentTree()
+                    ) { uri: Uri? ->
+                        if (uri != null) {
+                            vm.setWorkDirUri(uri.toString())
+                            workDirBootstrap = false
+                        }
+                    }
+                    // ---- SAF 权限健康检查（冷启动：非空 workDirUri 若无效自动回引导页） ----
+                    LaunchedEffect(Unit) {
+                        if (cfg.workDirUri.isNotBlank()) {
+                            val (st, _) = vm.checkWorkDir(cfg.workDirUri)
+                            when (st) {
+                                WorkDirCheckStatus.OK, WorkDirCheckStatus.EMPTY, WorkDirCheckStatus.UNCHECKED -> {
+                                    // OK / EMPTY 维持现状：EMPTY 会被上面 workDirBootstrap=true 触发引导页
+                                }
+                                else -> {
+                                    // NO_PERMISSION / NOT_FOUND / WRITE_FAIL / UNKNOWN_ERR → 重新弹引导页
+                                    workDirBootstrap = true
+                                }
+                            }
+                        }
+                    }
+                    if (workDirBootstrap) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .statusBarsPadding()
+                                .padding(32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                Icons.Filled.FolderOpen,
+                                contentDescription = null,
+                                modifier = Modifier.size(96.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.height(24.dp))
+                            Text(
+                                "选择一个自定义工作目录",
+                                style = MaterialTheme.typography.titleLarge
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                "AI 生成/修改的所有文件、产物、临时缓存都会保存在你选的这个文件夹里，方便在手机里随时查找和管理。\n\n推荐选择：「内部存储」下自建的文件夹（例如 AiAssistWork）。",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(24.dp))
+                            Button(
+                                onClick = { treeLauncher.launch(null) },
+                                modifier = Modifier.fillMaxWidth().height(56.dp)
+                            ) {
+                                Icon(Icons.Filled.FolderOpen, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("选择工作目录", style = MaterialTheme.typography.titleMedium)
+                            }
+                            Spacer(Modifier.height(14.dp))
+                            TextButton(onClick = { workDirBootstrap = false }) {
+                                Text("先跳过（之后在「我的→模型设置→工作目录」里随时设置）")
+                            }
+                            Spacer(Modifier.height(14.dp))
+                            Text(
+                                "提示：选中目录后系统会提示「允许应用访问」，请点允许。权限会被持久保存，下次启动直接生效。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        when {
+                            showSettings.visible -> SettingsScreen(vm)
+                            showArtifacts.visible -> ArtifactsScreen(vm, onBootstrap = {
+                                // 工作目录页内部如果发现 workDir 没配置，想直接跳 SAF
+                                workDirBootstrap = true
+                            })
+                            currentPage == "profile" -> ProfileScreen(vm, onBack = { currentPage = "chat" })
+                            else -> ChatScreen(
+                                vm,
+                                onOpenArtifacts = vm::openArtifacts,
+                                onOpenProfile = { currentPage = "profile" }
+                            )
+                        }
                     }
                 }
             }
@@ -230,13 +310,16 @@ private fun ChatScreen(vm: ChatViewModel, onOpenArtifacts: () -> Unit, onOpenPro
                 IconButton(onClick = vm::stopGeneration) {
                     Icon(Icons.Filled.Stop, contentDescription = "停止", tint = MaterialTheme.colorScheme.error)
                 }
+                Spacer(Modifier.width(8.dp))
             }
             IconButton(onClick = { searchVisible = !searchVisible; if (!searchVisible) { searchQuery = ""; searchMatches = emptyList(); currentMatch = -1 } }) {
                 Icon(Icons.Filled.Search, contentDescription = "搜索")
             }
+            Spacer(Modifier.width(8.dp))
             IconButton(onClick = onOpenArtifacts) {
                 Icon(Icons.Filled.FolderOpen, contentDescription = "工作目录")
             }
+            Spacer(Modifier.width(8.dp))
             IconButton(onClick = onOpenProfile) {
                 Icon(Icons.Filled.Person, contentDescription = "我的")
             }
@@ -492,13 +575,26 @@ private fun calculateInSampleSize(options: BitmapFactory.Options, reqWidth: Int,
 }
 
 @Composable
-private fun ArtifactsScreen(vm: ChatViewModel) {
+private fun ArtifactsScreen(
+    vm: ChatViewModel,
+    onBootstrap: () -> Unit = {}
+) {
     val artifacts by vm.artifactsState.collectAsState()
+    val context = LocalContext.current
     BackHandler {
         if (artifacts.selectMode) vm.exitSelectMode() else vm.closeArtifacts()
     }
 
     val snackbarHostState = remember { SnackbarHostState() }
+    // 工作目录页内部：直接调 SAF 选择目录（不用绕到 ProfileScreen）
+    val localTreeLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            vm.setWorkDirUri(uri.toString())
+            vm.refreshWorkDir()
+        }
+    }
 
     LaunchedEffect(artifacts.snackbarMessage) {
         if (artifacts.snackbarMessage.isNotBlank()) {
@@ -570,7 +666,24 @@ private fun ArtifactsScreen(vm: ChatViewModel) {
                     Spacer(Modifier.height(16.dp))
                     Text("未设置工作目录", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
-                    Text("请前往「我的 → 模型设置 → 工作目录」选择一个文件夹", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "工作目录用于保存 AI 生成的所有文件，选一个你记得住的文件夹吧（例如内部存储/AiAssistWork）。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    Button(onClick = { localTreeLauncher.launch(null) }, modifier = Modifier.fillMaxWidth().height(54.dp)) {
+                        Icon(Icons.Filled.FolderOpen, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("立即选择目录")
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = onBootstrap,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("返回首次启动引导页")
+                    }
                 }
             } else {
                 Box(Modifier.weight(1f).fillMaxSize()) {
@@ -746,6 +859,10 @@ private fun SettingsScreen(vm: ChatViewModel) {
             "doubao-1.5-vision-pro-32k"
         )
         "deepseek" -> listOf("deepseek-chat", "deepseek-reasoner")
+        "qianwen" -> listOf(
+            "qwen-turbo", "qwen-plus", "qwen-max",
+            "qwen-long", "qwen-vl-plus", "qwen-vl-max"
+        )
         else -> emptyList()
     }
     val onlineModels = tools.modelsResult.lines()
@@ -1036,7 +1153,7 @@ private fun KeyPointNav(messages: List<ChatMessage>, listState: androidx.compose
     }
     if (keyPoints.isEmpty()) return
 
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(1.dp, Alignment.CenterVertically)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically)) {
         keyPoints.forEach { (idx, label, _) ->
             val dotColor = when (label) {
                 "Q" -> Color(0xFF42A5F5)
@@ -1045,7 +1162,7 @@ private fun KeyPointNav(messages: List<ChatMessage>, listState: androidx.compose
             }
             Box(
                 modifier = Modifier
-                    .size(width = 16.dp, height = 6.dp)
+                    .size(width = 16.dp, height = 8.dp)
                     .clip(RoundedCornerShape(2.dp))
                     .background(dotColor.copy(alpha = 0.7f))
                     .clickable { scope.launch { listState.animateScrollToItem(idx) } }
@@ -1100,6 +1217,10 @@ private fun ProfileScreen(vm: ChatViewModel, onBack: () -> Unit) {
             "doubao-seed-1.6", "doubao-seed-2-1-pro-260628", "doubao-1.5-vision-pro-32k"
         )
         "deepseek" -> listOf("deepseek-chat", "deepseek-reasoner")
+        "qianwen" -> listOf(
+            "qwen-turbo", "qwen-plus", "qwen-max",
+            "qwen-long", "qwen-vl-plus", "qwen-vl-max"
+        )
         else -> emptyList()
     }
     val onlineModels = tools.modelsResult.lines()
@@ -1193,17 +1314,136 @@ private fun ProfileScreen(vm: ChatViewModel, onBack: () -> Unit) {
                                     Text("选择目录")
                                 }
                             } else {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = settings.workDirUri.substringAfterLast('/'),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.weight(1f),
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    TextButton(onClick = { treeLauncher.launch(null) }) {
-                                        Text("更换")
+                                Column {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = settings.workDirUri.substringAfterLast('/'),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            modifier = Modifier.weight(1f),
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        TextButton(onClick = { treeLauncher.launch(null) }) {
+                                            Text("更换")
+                                        }
                                     }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        val wUri = settings.workDirUri
+                                        OutlinedButton(
+                                            onClick = {
+                                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                                    val u = Uri.parse(wUri)
+                                                    setDataAndType(u, DocumentsContract.Document.MIME_TYPE_DIR)
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+                                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                }
+                                                runCatching { context.startActivity(Intent.createChooser(intent, "打开工作目录")) }
+                                                    .onFailure {
+                                                        val fallback = Intent(Intent.ACTION_VIEW).apply {
+                                                            setDataAndType(Uri.parse(wUri), "resource/folder")
+                                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                        }
+                                                        runCatching { context.startActivity(Intent.createChooser(fallback, "打开工作目录")) }
+                                                    }
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(Icons.Filled.FolderOpen, null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("打开", fontSize = MaterialTheme.typography.labelMedium.fontSize)
+                                        }
+                                        OutlinedButton(
+                                            onClick = { vm.onWorkDirUriChange("") },
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(Icons.Filled.Close, null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("清空", fontSize = MaterialTheme.typography.labelMedium.fontSize)
+                                        }
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    // --- 新增：立即诊断 + 状态卡 ---
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        OutlinedButton(
+                                            onClick = { vm.triggerCheckWorkDir(settings.workDirUri) },
+                                            enabled = !settings.workDirCheckingNow,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            if (settings.workDirCheckingNow) {
+                                                androidx.compose.material3.CircularProgressIndicator(
+                                                    modifier = Modifier.size(16.dp),
+                                                    strokeWidth = 2.dp
+                                                )
+                                                Spacer(Modifier.width(6.dp))
+                                            } else {
+                                                Icon(Icons.Filled.Refresh, null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                            }
+                                            Text(
+                                                if (settings.workDirCheckingNow) "诊断中…" else "立即诊断目录状态",
+                                                fontSize = MaterialTheme.typography.labelMedium.fontSize
+                                            )
+                                        }
+                                        Text(
+                                            text = when (settings.workDirCheckStatus) {
+                                                WorkDirCheckStatus.OK -> "正常"
+                                                WorkDirCheckStatus.UNCHECKED -> "未检测"
+                                                WorkDirCheckStatus.EMPTY -> "未设置"
+                                                WorkDirCheckStatus.NO_PERMISSION -> "无权限"
+                                                WorkDirCheckStatus.NOT_FOUND -> "不存在"
+                                                WorkDirCheckStatus.WRITE_FAIL -> "读写失败"
+                                                WorkDirCheckStatus.UNKNOWN_ERR -> "异常"
+                                            },
+                                            color = when (settings.workDirCheckStatus) {
+                                                WorkDirCheckStatus.OK -> Color(0xFF2E7D32)
+                                                WorkDirCheckStatus.UNCHECKED, WorkDirCheckStatus.EMPTY ->
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                else -> Color(0xFFC62828)
+                                            },
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                    }
+                                    if (settings.workDirCheckMsg.isNotBlank()) {
+                                        Spacer(Modifier.height(6.dp))
+                                        val bgColor = when (settings.workDirCheckStatus) {
+                                            WorkDirCheckStatus.OK -> Color(0xFFE8F5E9)
+                                            WorkDirCheckStatus.UNCHECKED, WorkDirCheckStatus.EMPTY ->
+                                                MaterialTheme.colorScheme.surfaceVariant
+                                            else -> Color(0xFFFFEBEE)
+                                        }
+                                        val fgColor = when (settings.workDirCheckStatus) {
+                                            WorkDirCheckStatus.OK -> Color(0xFF1B5E20)
+                                            WorkDirCheckStatus.UNCHECKED, WorkDirCheckStatus.EMPTY ->
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            else -> Color(0xFFB71C1C)
+                                        }
+                                        androidx.compose.material3.Surface(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            color = bgColor,
+                                            shape = RoundedCornerShape(10.dp)
+                                        ) {
+                                            Text(
+                                                text = settings.workDirCheckMsg,
+                                                modifier = Modifier.padding(10.dp),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = fgColor
+                                            )
+                                        }
+                                    }
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "选择完工作目录后，记得点下面的「保存」按钮（已清空的目录保存后会再次生效为已选值）。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
                             OutlinedTextField(

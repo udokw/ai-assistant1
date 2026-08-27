@@ -10,23 +10,22 @@ local.properties
 .idea/
 .cxx/
 captures/
+.vscode/
 
-# iOS
-ios/build/
-ios/*.xcodeproj/
-ios/*.xcworkspace/
-ios/DerivedData/
-ios/*.ipa
-ios/*.app
-*.DS_Store
-
-# Secrets - Android config.json 包含真实 API Key，不要上传!
+# Secrets - Android config.json 包含真实 API Key
 app/src/main/assets/config.json
+
+# Test files
+test_multimodal.py
+test_image.png
+__pycache__/
+*.pyc
+debug-artifacts-missing-data-items.md
+
+# iOS (不再需要)
+ios/
 
 # Misc
 *.log
 *.tmp
-test_multimodal.py
-test_image.png
-__pycache__/
-debug-artifacts-missing-data-items.md
+.DS_Store
