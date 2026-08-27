@@ -13,20 +13,25 @@ on:
 jobs:
   build:
     runs-on: macos-14
+    env:
+      HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install xcodegen
-        run: brew install xcodegen
+        run: |
+          brew untap aws/tap 2>/dev/null || true
+          brew install xcodegen 2>&1
 
       - name: Generate Xcode project
         working-directory: ios
-        run: xcodegen generate
+        run: xcodegen generate 2>&1
 
       - name: Build app (unsigned)
         working-directory: ios
         run: |
+          set -o pipefail
           xcodebuild clean build \
             -project AIAssistant.xcodeproj \
             -scheme AIAssistant \
@@ -36,9 +41,20 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM=""
+            DEVELOPMENT_TEAM="" \
+            2>&1 | tee build.log
+
+      - name: Print build log on failure
+        if: failure()
+        working-directory: ios
+        run: |
+          echo "=== BUILD LOG (last 200 lines) ==="
+          tail -n 200 build.log || true
+          echo "=== ERROR LINES ==="
+          grep -i "error:" build.log || true
 
       - name: Create IPA
+        if: success()
         working-directory: ios
         run: |
           APP_PATH="build/Build/Products/Release-iphoneos/AIAssistant.app"
@@ -47,8 +63,17 @@ jobs:
           zip -r AIAssistant.ipa Payload
 
       - name: Upload IPA artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: AIAssistant-ipa
           path: ios/AIAssistant.ipa
           retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ios/build.log
+          retention-days: 7

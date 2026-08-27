@@ -43,3 +43,4 @@ targets:
           - "Info.plist"
     resources:
       - path: AIAssistant/Resources/config.json
+      - path: AIAssistant/Resources/Assets.xcassets
