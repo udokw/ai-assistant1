@@ -14,6 +14,7 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     ENABLE_BITCODE: NO
     DERIVED_DATA_PATH: build
+    DEVELOPMENT_TEAM: ""
 schemes:
   AIAssistant:
     build:
@@ -33,10 +34,18 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ai.assistant
-        INFOPLIST_FILE: AIAssistant/Info.plist
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_NAME: AIAssistant
         TARGETED_DEVICE_FAMILY: "1,2"
-        GENERATE_INFOPLIST_FILE: NO
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "AI 助手"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "需要相册权限以选择图片附件发送给 AI"
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
     sources:
       - path: AIAssistant
         excludes:
