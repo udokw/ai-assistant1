@@ -1,0 +1,32 @@
+# Android
+*.apk
+*.aab
+*.ap_
+*.dex
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.cxx/
+captures/
+
+# iOS
+ios/build/
+ios/*.xcodeproj/
+ios/*.xcworkspace/
+ios/DerivedData/
+ios/*.ipa
+ios/*.app
+*.DS_Store
+
+# Secrets - Android config.json 包含真实 API Key，不要上传!
+app/src/main/assets/config.json
+
+# Misc
+*.log
+*.tmp
+test_multimodal.py
+test_image.png
+__pycache__/
+debug-artifacts-missing-data-items.md

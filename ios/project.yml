@@ -1,0 +1,45 @@
+name: AIAssistant
+options:
+  bundleIdPrefix: com.ai.assistant
+  deploymentTarget:
+    iOS: "16.0"
+  developmentLanguage: zh-Hans
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "100"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    ENABLE_BITCODE: NO
+    DERIVED_DATA_PATH: build
+schemes:
+  AIAssistant:
+    build:
+      targets:
+        AIAssistant: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    archive:
+      config: Release
+targets:
+  AIAssistant:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ai.assistant
+        INFOPLIST_FILE: AIAssistant/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: NO
+    sources:
+      - path: AIAssistant
+        excludes:
+          - "Info.plist"
+    resources:
+      - path: AIAssistant/Resources/config.json

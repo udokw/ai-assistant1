@@ -1,0 +1,31 @@
+{
+  "llm": {
+    "provider": "deepseek",
+    "providers": {
+      "deepseek": {
+        "api_key": "",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-chat",
+        "api_mode": "chat"
+      },
+      "doubao": {
+        "api_key": "",
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "model": "doubao-seed-2-1-pro-260628",
+        "api_mode": "chat"
+      }
+    }
+  },
+  "mcp": {
+    "transport": "http",
+    "url": "http://192.168.5.30:8787/mcp",
+    "command": [],
+    "enabled": true
+  },
+  "agent": {
+    "max_iterations": 25,
+    "temperature": 0.2
+  },
+  "workDirUri": "",
+  "floatingEnabled": false
+}
