@@ -26,7 +26,17 @@ jobs:
 
       - name: Generate Xcode project
         working-directory: ios
-        run: xcodegen generate 2>&1
+        run: |
+          xcodegen generate 2>&1
+          echo "=== Generated files ==="
+          ls -la *.xcodeproj/
+          echo "=== Project contents ==="
+          find . -name "*.swift" -o -name "*.plist" -o -name "*.json" | head -30
+
+      - name: List schemes
+        working-directory: ios
+        run: |
+          xcodebuild -project AIAssistant.xcodeproj -list 2>&1 || true
 
       - name: Build app (unsigned)
         working-directory: ios
