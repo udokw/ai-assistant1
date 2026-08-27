@@ -7,11 +7,17 @@ struct WorkDirView: View {
     var body: some View {
         VStack(spacing: 0) {
             if viewModel.workFiles.isEmpty {
-                ContentUnavailableView(
-                    "暂无文件",
-                    systemImage: "folder",
-                    description: Text("工作目录为空或未设置")
-                )
+                VStack(spacing: 12) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.secondary)
+                    Text("暂无文件")
+                        .font(.headline)
+                    Text("工作目录为空或未设置")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
                     ForEach(viewModel.workFiles) { file in

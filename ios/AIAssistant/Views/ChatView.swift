@@ -52,12 +52,12 @@ struct ChatView: View {
                     }
                     .padding()
                 }
-                .onChange(of: viewModel.messages.count) { _, _ in
+                .onChange(of: viewModel.messages.count) { _ in
                     if let last = viewModel.messages.last {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
                 }
-                .onChange(of: viewModel.streamingText) { _, _ in
+                .onChange(of: viewModel.streamingText) { _ in
                     withAnimation { proxy.scrollTo(viewModel.messages.last?.id ?? UUID(), anchor: .bottom) }
                 }
             }
