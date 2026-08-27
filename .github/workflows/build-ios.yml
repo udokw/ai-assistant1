@@ -38,7 +38,11 @@ jobs:
       - name: Build app (unsigned)
         working-directory: ios
         run: |
-          set -o pipefail
+          echo "=== Project structure ==="
+          ls -la
+          echo "=== xcodeproj contents ==="
+          ls -la AIAssistant.xcodeproj/ || true
+          echo "=== Starting xcodebuild ==="
           xcodebuild clean build \
             -project AIAssistant.xcodeproj \
             -scheme AIAssistant \
@@ -48,17 +52,10 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            2>&1 | tee build.log
-
-      - name: Print build log on failure
-        if: failure()
-        working-directory: ios
-        run: |
-          echo "=== BUILD LOG (last 200 lines) ==="
-          tail -n 200 build.log || true
-          echo "=== ERROR LINES ==="
-          grep -i "error:" build.log || true
+            DEVELOPMENT_TEAM="" 2>&1 || {
+              echo "=== BUILD FAILED with exit code $? ==="
+              exit 1
+            }
 
       - name: Create IPA
         if: success()
